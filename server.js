@@ -7,7 +7,7 @@ import { initializeDb } from './database.js'; // <-- Импортируем на
 
 // --- Настройка путей ---
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(filename);
+const __dirname = path.dirname(__filename);
 
 // --- Инициализация БД при старте сервера ---
 let db;
