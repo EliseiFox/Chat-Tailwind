@@ -53,7 +53,7 @@ function addMessageToChat(message) {
         const isMyMessage = message.username === username;
         item.className = `flex ${isMyMessage ? 'justify-end' : 'justify-start'}`;
         item.innerHTML = `
-            <div class="${isMyMessage ? 'bg-blue-500 text-white' : 'bg-white'} rounded-lg p-3 max-w-xs`">
+            <div class="${isMyMessage ? 'bg-blue-500 text-white' : 'bg-white'} rounded-lg p-3 max-w-xs">
                 ${!isMyMessage ? `<p class="text-xs font-bold text-gray-600">${message.username}</p>` : ''}
                 <p>${message.text}</p>
             </div>
