@@ -1,73 +1,114 @@
-// Импортируем встроенные модули Node.js
+// server.js
 import http from 'http';
-import fs from 'fs';
+import fs from 'fs/promises'; // Используем асинхронную версию fs
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { WebSocketServer } from 'ws'; // Импортируем WebSocket сервер
 
-// --- Получение __dirname в ES-модулях ---
-// import.meta.url содержит URL текущего файла
-// fileURLToPath преобразует этот URL в обычный путь файловой системы
+// --- Настройка путей ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// -----------------------------------------
 
-// Данные, которые мы будем отдавать как API
-const linksData = [
-    { title: 'Мой GitHub', url: 'https://github.com' },
-    { title: 'Профиль на LinkedIn', url: 'https://linkedin.com' },
-    { title: 'Портфолио', url: 'https://example.com' },
-];
+// --- Хранилище данных в памяти (для простоты) ---
+const users = new Set();
+const messages = [];
 
-const server = http.createServer((req, res) => {
-    console.log(`Запрос: ${req.method} ${req.url}`);
+// --- Создание HTTP сервера ---
+const server = http.createServer(async (req, res) => {
+    console.log(`HTTP Запрос: ${req.method} ${req.url}`);
 
-    if (req.method === 'GET') {
-        if (req.url === '/api/links') {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(linksData));
-            return;
-        }
-
-        let filePath = path.join(__dirname, 'public', req.url === '/' ? 'index.html' : req.url);
-        
-        const extname = path.extname(filePath);
-        let contentType = 'text/html';
-        switch (extname) {
-            case '.js':
-                contentType = 'text/javascript';
-                break;
-            case '.css':
-                contentType = 'text/css';
-                break;
-            case '.json':
-                contentType = 'application/json';
-                break;
-        }
-
-        fs.readFile(filePath, (err, content) => {
-            if (err) {
-                if (err.code == 'ENOENT') {
-                    res.writeHead(404, { 'Content-Type': 'text/html' });
-                    res.end('<h1>404 Not Found</h1>');
+    // Роутинг для API
+    if (req.url === '/api/register' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk.toString());
+        req.on('end', () => {
+            try {
+                const { username } = JSON.parse(body);
+                if (users.has(username)) {
+                    res.writeHead(409, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ message: 'Такой никнейм уже занят' }));
                 } else {
-                    res.writeHead(500);
-                    res.end(`Server Error: ${err.code}`);
+                    users.add(username);
+                    res.writeHead(201, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ message: 'Регистрация успешна' }));
                 }
-            } else {
-                res.writeHead(200, { 'Content-Type': contentType });
-                res.end(content, 'utf-8');
+            } catch {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ message: 'Неверный формат запроса' }));
             }
         });
+        return;
+    }
 
-    } else {
-        res.writeHead(405, { 'Content-Type': 'text/html' });
-        res.end('<h1>405 Method Not Allowed</h1>');
+    // --- Логика раздачи статических файлов ---
+    const getContentType = (filePath) => {
+        const extname = path.extname(filePath);
+        switch (extname) {
+            case '.js': return 'text/javascript';
+            case '.css': return 'text/css';
+            case '.html': return 'text/html';
+            default: return 'application/octet-stream';
+        }
+    };
+
+    let filePath = path.join(__dirname, 'public', req.url === '/' ? 'index.html' : req.url);
+    
+    // Если пользователь не "залогинен" (просто проверяем URL), отправляем на регистрацию
+    if (req.url === '/') {
+       filePath = path.join(__dirname, 'public', 'index.html');
+    }
+
+    try {
+        const content = await fs.readFile(filePath);
+        res.writeHead(200, { 'Content-Type': getContentType(filePath) });
+        res.end(content, 'utf-8');
+    } catch (err) {
+        if (err.code === 'ENOENT') {
+            res.writeHead(404, { 'Content-Type': 'text/html' });
+            res.end('<h1>404 Not Found</h1>');
+        } else {
+            res.writeHead(500);
+            res.end(`Server Error: ${err.code}`);
+        }
     }
 });
 
-const PORT = process.env.PORT || 3000;
+// --- Создание и настройка WebSocket сервера ---
+const wss = new WebSocketServer({ server });
 
+wss.on('connection', (ws) => {
+    console.log('Клиент подключился по WebSocket');
+
+    // Отправляем новому клиенту историю сообщений
+    messages.forEach(msg => ws.send(JSON.stringify(msg)));
+
+    ws.on('message', (message) => {
+        const parsedMessage = JSON.parse(message);
+        console.log('Получено сообщение:', parsedMessage);
+
+        // Добавляем сообщение в историю
+        messages.push(parsedMessage);
+        // Ограничим историю, чтобы не занимать всю память
+        if (messages.length > 50) {
+            messages.shift();
+        }
+
+        // Рассылаем сообщение всем подключенным клиентам
+        wss.clients.forEach((client) => {
+            if (client.readyState === client.OPEN) {
+                client.send(JSON.stringify(parsedMessage));
+            }
+        });
+    });
+
+    ws.on('close', () => {
+        console.log('Клиент отключился');
+    });
+});
+
+
+// --- Запуск сервера ---
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`Сервер запущен на порту ${PORT}...`);
-    console.log(`Откройте http://localhost:${PORT} в браузере`);
+    console.log(`Сервер запущен на http://localhost:${PORT}`);
 });
