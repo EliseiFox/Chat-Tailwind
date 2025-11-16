@@ -11,8 +11,9 @@ const messageForm = document.getElementById('message-form');
 const messageInput = document.getElementById('message-input');
 
 // Подключаемся к WebSocket серверу
-// Используем 'ws://' или 'wss://' для защищенного соединения
-const socket = new WebSocket(`ws://${window.location.host}`);
+// Определяем, какой протокол использовать, в зависимости от протокола страницы
+const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+const socket = new WebSocket(`${protocol}//${window.location.host}`);
 
 socket.onopen = () => {
     console.log('WebSocket соединение установлено.');
