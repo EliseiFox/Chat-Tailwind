@@ -1,99 +1,70 @@
-// server.js
+// server.js (Express версия)
 import http from 'http';
-import fs from 'fs/promises'; // Используем асинхронную версию fs
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { WebSocketServer } from 'ws'; // Импортируем WebSocket сервер
+import express from 'express'; // Импортируем express
+import { WebSocketServer } from 'ws';
 
-// --- Настройка путей ---
+// --- Настройка путей и Express приложения ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// --- Хранилище данных в памяти (для простоты) ---
+const app = express(); // Создаем экземпляр Express-приложения
+
+// --- Хранилище данных в памяти (остается без изменений) ---
 const users = new Set();
 const messages = [];
 
-// --- Создание HTTP сервера ---
-const server = http.createServer(async (req, res) => {
-    console.log(`HTTP Запрос: ${req.method} ${req.url}`);
+// --- Middleware (Промежуточное ПО) ---
+// 1. Middleware для парсинга JSON-тела запросов
+app.use(express.json());
+// 2. Middleware для раздачи статических файлов из папки 'public'
+app.use(express.static(path.join(__dirname, 'public')));
 
-    // Роутинг для API
-    if (req.url === '/api/register' && req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => body += chunk.toString());
-        req.on('end', () => {
-            try {
-                const { username } = JSON.parse(body);
-                if (users.has(username)) {
-                    res.writeHead(409, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ message: 'Такой никнейм уже занят' }));
-                } else {
-                    users.add(username);
-                    res.writeHead(201, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ message: 'Регистрация успешна' }));
-                }
-            } catch {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ message: 'Неверный формат запроса' }));
-            }
-        });
-        return;
-    }
 
-    // --- Логика раздачи статических файлов ---
-    const getContentType = (filePath) => {
-        const extname = path.extname(filePath);
-        switch (extname) {
-            case '.js': return 'text/javascript';
-            case '.css': return 'text/css';
-            case '.html': return 'text/html';
-            default: return 'application/octet-stream';
-        }
-    };
-
-    let filePath = path.join(__dirname, 'public', req.url === '/' ? 'index.html' : req.url);
-    
-    // Если пользователь не "залогинен" (просто проверяем URL), отправляем на регистрацию
-    if (req.url === '/') {
-       filePath = path.join(__dirname, 'public', 'index.html');
-    }
-
+// --- Роутинг (Маршрутизация) ---
+app.post('/api/register', (req, res) => {
     try {
-        const content = await fs.readFile(filePath);
-        res.writeHead(200, { 'Content-Type': getContentType(filePath) });
-        res.end(content, 'utf-8');
-    } catch (err) {
-        if (err.code === 'ENOENT') {
-            res.writeHead(404, { 'Content-Type': 'text/html' });
-            res.end('<h1>404 Not Found</h1>');
-        } else {
-            res.writeHead(500);
-            res.end(`Server Error: ${err.code}`);
+        const { username } = req.body; // express.json() сделал это возможным!
+
+        if (!username) {
+            return res.status(400).json({ message: 'Имя пользователя не может быть пустым' });
         }
+
+        if (users.has(username)) {
+            // Отправляем ответ с кодом 409 Conflict
+            return res.status(409).json({ message: 'Такой никнейм уже занят' });
+        } else {
+            users.add(username);
+            // Отправляем ответ с кодом 201 Created
+            return res.status(201).json({ message: 'Регистрация успешна' });
+        }
+    } catch (error) {
+        return res.status(500).json({ message: 'Внутренняя ошибка сервера' });
     }
 });
 
-// --- Создание и настройка WebSocket сервера ---
+
+// --- Создание HTTP и WebSocket серверов ---
+// Нам все еще нужен 'http' сервер, чтобы "привязать" к нему WebSocket сервер
+const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
+// --- Логика WebSocket (остается почти без изменений) ---
 wss.on('connection', (ws) => {
     console.log('Клиент подключился по WebSocket');
 
-    // Отправляем новому клиенту историю сообщений
     messages.forEach(msg => ws.send(JSON.stringify(msg)));
 
     ws.on('message', (message) => {
         const parsedMessage = JSON.parse(message);
         console.log('Получено сообщение:', parsedMessage);
 
-        // Добавляем сообщение в историю
         messages.push(parsedMessage);
-        // Ограничим историю, чтобы не занимать всю память
         if (messages.length > 50) {
             messages.shift();
         }
 
-        // Рассылаем сообщение всем подключенным клиентам
         wss.clients.forEach((client) => {
             if (client.readyState === client.OPEN) {
                 client.send(JSON.stringify(parsedMessage));
