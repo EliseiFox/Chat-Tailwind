@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import express from 'express'; // Импортируем express
 import { WebSocketServer } from 'ws';
+console.log("ееееееееееее");
 
 // --- Настройка путей и Express приложения ---
 const __filename = fileURLToPath(import.meta.url);
